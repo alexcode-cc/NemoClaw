@@ -873,9 +873,59 @@ nemoclaw uninstall --yes
 
 # 若需同時刪除 Ollama 模型
 # nemoclaw uninstall --yes --delete-models
-
-# 重新安裝...（回到「第四步：安裝 NemoClaw」）
 ```
+
+> **注意：** `nemoclaw uninstall` 會移除全域 npm 套件和 OpenShell CLI，導致 `nemoclaw` 指令不存在。重新安裝時請選擇以下任一方式。
+
+**方式 A：從原始碼目錄重新安裝（推薦，最快）**
+
+```bash
+cd ~/NemoClaw  # 進入原始碼目錄（uninstall 不會刪除原始碼）
+
+# 重新安裝全域 CLI 連結
+npm install
+npm link
+
+# 套用客製化 Dockerfile（若尚未套用）
+cp Dockerfile.default Dockerfile
+cp Dockerfile.base-default Dockerfile.base
+
+# 重建基底映像
+docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
+
+# 重新 Onboard
+NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+NEMOCLAW_PROVIDER=ollama \
+NEMOCLAW_MODEL=glm-5:cloud \
+NEMOCLAW_POLICY_MODE=suggested \
+nemoclaw onboard --non-interactive
+```
+
+**方式 B：使用原始碼目錄的 install.sh**
+
+```bash
+cd ~/NemoClaw
+
+NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+NEMOCLAW_PROVIDER=ollama \
+NEMOCLAW_MODEL=glm-5:cloud \
+NEMOCLAW_POLICY_MODE=suggested \
+./install.sh
+```
+
+**方式 C：使用線上安裝腳本（完全乾淨安裝）**
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_PROVIDER=ollama \
+  NEMOCLAW_MODEL=glm-5:cloud \
+  bash
+```
+
+> **提示：** 方式 C 會重新 `git clone` 倉庫，若你有本地客製化（Dockerfile.default、.openclaw-data），需在 clone 完成後重新套用。
 
 ### 常見場景快速指南
 
