@@ -21,6 +21,7 @@ vdr-notes/
 Dockerfiles/
 Dockerfile
 Dockerfile.base
+.openclaw-data/
 
 
 # Security: secrets, credentials, and keys

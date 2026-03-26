@@ -91,7 +91,20 @@ parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
 origins = ['http://127.0.0.1:18789']; \
 origins = list(dict.fromkeys(origins + [chat_origin])); \
+ollama_models = [ \
+    {'id': 'glm-5:cloud', 'name': 'GLM-5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'minimax-m2.7:cloud', 'name': 'MiniMax M2.7 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'kimi-k2.5:cloud', 'name': 'Kimi K2.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'qwen3.5:cloud', 'name': 'Qwen3.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'deepseek-v3.2:cloud', 'name': 'DeepSeek V3.2 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+]; \
 providers = { \
+    'ollama': { \
+        'baseUrl': inference_base_url, \
+        'apiKey': 'ollama', \
+        'api': inference_api, \
+        'models': ollama_models \
+    }, \
     provider_key: { \
         'baseUrl': inference_base_url, \
         'apiKey': 'unused', \
@@ -100,8 +113,9 @@ providers = { \
     } \
 }; \
 config = { \
-    'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
+    'agents': {'defaults': {'model': {'primary': 'ollama/glm-5:cloud', 'fallbacks': ['ollama/minimax-m2.7:cloud', 'ollama/kimi-k2.5:cloud', 'ollama/qwen3.5:cloud', 'ollama/deepseek-v3.2:cloud', f'inference/{primary_model_ref}']}}}, \
     'models': {'mode': 'merge', 'providers': providers}, \
+    'plugins': {'entries': {'discord': {'enabled': True}}}, \
     'channels': {'defaults': {'configWrites': False}}, \
     'gateway': { \
         'mode': 'local', \
@@ -121,6 +135,12 @@ os.chmod(path, 0o600)"
 # Install NemoClaw plugin into OpenClaw
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
     && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
+
+# Copy custom .openclaw-data files from project directory into sandbox.
+# This syncs all files and subdirectories (skills, hooks, identity, etc.)
+# into the writable .openclaw-data area before the security lockdown.
+# The directory is optional — if empty or missing, this is a no-op.
+COPY --chown=sandbox:sandbox .openclaw-data/ /sandbox/.openclaw-data/
 
 # Lock openclaw.json via DAC: chown to root so the sandbox user cannot modify
 # it at runtime.  This works regardless of Landlock enforcement status.
