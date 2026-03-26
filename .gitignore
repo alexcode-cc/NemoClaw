@@ -20,6 +20,7 @@ specs/
 vdr-notes/
 Dockerfiles/
 Dockerfile
+Dockerfile.base
 
 
 # Security: secrets, credentials, and keys
