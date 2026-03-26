@@ -107,7 +107,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 # 驗證安裝
 ollama --version
 
-# 安裝 Json 格式化工具 
+# 安裝 Json 格式化工具
 sudo apt update
 sudo apt install -y jq
 ```
@@ -453,105 +453,118 @@ NEMOCLAW_POLICY_PRESETS=pypi,npm,docker,huggingface,telegram,telegram,outlook
 
 > **重要：** 僅修改 `agents.defaults.model` 的備援鏈是不夠的。OpenClaw 根據模型 ID 前綴（如 `ollama/`）查找 `models.providers` 中對應的提供者。若 `ollama` 提供者不存在，所有 `ollama/*` 模型都無法使用，會回退到預設的 `inference/nvidia/nemotron-3-super-120b-a12b`。
 
-### 修改 Dockerfile
+### 修改 Dockerfile.base 與 Dockerfile
 
-在 NemoClaw 原始碼目錄中，使用 Python 腳本修改 Dockerfile：
+NemoClaw 採用雙層 Dockerfile 架構：
 
-```bash
-cd ~/nemo-claw  # 或你的 NemoClaw 原始碼目錄
+- **`Dockerfile.base`** — 基底映像，包含 OpenClaw CLI 版本釘選、系統套件等較少變動的層。
+- **`Dockerfile`** — 生產映像，包含插件、藍圖、設定產生腳本等隨部署變化的層。
 
-python3 << 'PATCH'
-import re
+設定 Ollama 備援鏈需要修改這兩個檔案。
 
-with open("Dockerfile") as f:
-    content = f.read()
+#### 1. 升級 OpenClaw CLI 版本（Dockerfile.base）
 
-# 0. 升級 openclaw 至最新版（避免 node-llama-cpp 編譯失敗）
-import re
-content = re.sub(r'openclaw@[\d.]+', 'openclaw@2026.3.23', content)
-
-# 1. 在 config = { 之前插入 ollama_models 定義
-ollama_models = """\
-ollama_models = [ \\
-    {'id': 'glm-5:cloud', 'name': 'GLM-5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\
-    {'id': 'minimax-m2.7:cloud', 'name': 'MiniMax M2.7 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\
-    {'id': 'kimi-k2.5:cloud', 'name': 'Kimi K2.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\
-    {'id': 'qwen3.5:cloud', 'name': 'Qwen3.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\
-    {'id': 'deepseek-v3.2:cloud', 'name': 'DeepSeek V3.2 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\
-]; \\"""
-content = content.replace("config = { \\", ollama_models + "\nconfig = { \\")
-
-# 2. 替換 agents.defaults.model（加入備援鏈）
-content = content.replace(
-    "'agents': {'defaults': {'model': {'primary': f'inference/{model}'}}},",
-    "'agents': {'defaults': {'model': {'primary': 'ollama/glm-5:cloud', 'fallbacks': ['ollama/minimax-m2.7:cloud', 'ollama/kimi-k2.5:cloud', 'ollama/qwen3.5:cloud', 'ollama/deepseek-v3.2:cloud', 'inference/nvidia/nemotron-3-super-120b-a12b']}}},"
-)
-
-# 3. 在 'nvidia' 提供者之前插入 'ollama' 提供者
-content = content.replace(
-    "        'nvidia': {",
-    "        'ollama': { \\\n"
-    "            'baseUrl': 'https://inference.local/v1', \\\n"
-    "            'apiKey': 'ollama', \\\n"
-    "            'api': 'openai-completions', \\\n"
-    "            'models': ollama_models \\\n"
-    "        }, \\\n"
-    "        'nvidia': {"
-)
-
-with open("Dockerfile", "w") as f:
-    f.write(content)
-
-print("✓ Dockerfile 已修改：ollama 提供者 + 備援模型鏈")
-PATCH
-```
-
-### 驗證 Dockerfile 修改
-
-```bash
-# 確認 openclaw 升級至最新版（避免 node-llama-cpp 編譯失敗）
-grep "openclaw@2026.3.23" Dockerfile
-# 預期：正確版本
-RUN npm install -g openclaw@2026.3.23 \
-
-# 確認 ollama 提供者已加入
-grep -c "ollama" Dockerfile
-# 預期：多行匹配
-
-# 確認備援鏈已加入
-grep "fallbacks" Dockerfile
-# 預期：包含 minimax, kimi, qwen, deepseek, nemotron
-```
-
-### 確認 Dockerfile 修改的內容
+開啟 `Dockerfile.base`，找到 `openclaw@` 版本行，將版本號改為 `2026.3.24`（或更新版本）：
 
 ```dockerfile
-...
-# Install OpenClaw CLI and PyYAML for blueprint runner (single layer)
-RUN npm install -g openclaw@2026.3.23 \
+# 修改前
+RUN npm install -g openclaw@2026.3.11 \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
-...
-RUN python3 -c "\                                                                                                                                                                                                import json, os, secrets; \                                                                                                                                                                                      from urllib.parse import urlparse; \                                                                                                                                                                             model = os.environ['NEMOCLAW_MODEL']; \                                                                                                                                                                          chat_ui_url = os.environ['CHAT_UI_URL']; \                                                                                                                                                                       parsed = urlparse(chat_ui_url); \                                                                                                                                                                                chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \                                                                                           origins = ['http://127.0.0.1:18789']; \                                                                                                                                                                          origins = list(dict.fromkeys(origins + [chat_origin])); \                                                                                                                                                        ollama_models = [ \                                                                                                                                                                                                  {'id': 'glm-5:cloud', 'name': 'GLM-5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \           {'id': 'minimax-m2.7:cloud', 'name': 'MiniMax M2.7 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \                                                                                                                                                                                                              {'id': 'kimi-k2.5:cloud', 'name': 'Kimi K2.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \                                                                                                                                                                                                                    {'id': 'qwen3.5:cloud', 'name': 'Qwen3.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \       {'id': 'deepseek-v3.2:cloud', 'name': 'DeepSeek V3.2 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \                                                                                                                                                                                                        ]; \                                                                                                                                                                                                             config = { \                                                                                                                                                                                                         'agents': {'defaults': {'model': {'primary': 'ollama/glm-5:cloud', 'fallbacks': ['ollama/minimax-m2.7:cloud', 'ollama/kimi-k2.5:cloud', 'ollama/qwen3.5:cloud', 'ollama/deepseek-v3.2:cloud', 'inference/nvidia/nemotron-3-super-120b-a12b']}}}, \
-    'models': {'mode': 'merge', 'providers': { \
-        'ollama': { \
-            'baseUrl': 'https://inference.local/v1', \
-            'apiKey': 'ollama', \
-            'api': 'openai-completions', \
-            'models': ollama_models \
-        }, \
-        'nvidia': { \
-            'baseUrl': 'https://inference.local/v1', \
-            'apiKey': 'openshell-managed', \
-            'api': 'openai-completions', \
-            'models': [{'id': model.split('/')[-1], 'name': model, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
-        }, \
-        'inference': { \
-            'baseUrl': 'https://inference.local/v1', \
-            'apiKey': 'unused', \
-            'api': 'openai-completions', \
-            'models': [{'id': model, 'name': model, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
-        } \
-    }}, \
+
+# 修改後
+RUN npm install -g openclaw@2026.3.24 \
+    && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
+```
+
+> **為何修改 Dockerfile.base？** OpenClaw CLI 版本釘選在基底映像中。過低的版本（如 2026.3.11）會導致 `node-llama-cpp` 預建二進位不相容，回退至從原始碼編譯而失敗。
+
+#### 2. 加入 ollama 提供者與備援鏈（Dockerfile）
+
+開啟 `Dockerfile`，找到 `RUN python3 -c` 設定產生區塊（約在檔案尾端）。這段 Python 腳本會在建置時產生 `openclaw.json`。需要修改其中三處：
+
+**a. 在 `providers = {` 之前加入 `ollama_models` 列表定義：**
+
+```python
+ollama_models = [ \
+    {'id': 'glm-5:cloud', 'name': 'GLM-5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'minimax-m2.7:cloud', 'name': 'MiniMax M2.7 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'kimi-k2.5:cloud', 'name': 'Kimi K2.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'qwen3.5:cloud', 'name': 'Qwen3.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'deepseek-v3.2:cloud', 'name': 'DeepSeek V3.2 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+]; \
+```
+
+**b. 將 `agents.defaults.model` 的 `primary` 改為 Ollama 模型，並加入 `fallbacks`：**
+
+```python
+# 修改前
+'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
+
+# 修改後
+'agents': {'defaults': {'model': {'primary': 'ollama/glm-5:cloud', 'fallbacks': ['ollama/minimax-m2.7:cloud', 'ollama/kimi-k2.5:cloud', 'ollama/qwen3.5:cloud', 'ollama/deepseek-v3.2:cloud', 'inference/nvidia/nemotron-3-super-120b-a12b']}}}, \
+```
+
+**c. 在 `providers` 字典中，於現有提供者之前加入 `ollama` 提供者：**
+
+```python
+# 修改前
+providers = { \
+    provider_key: { \
+
+# 修改後
+providers = { \
+    'ollama': { \
+        'baseUrl': inference_base_url, \
+        'apiKey': 'ollama', \
+        'api': 'openai-completions', \
+        'models': ollama_models \
+    }, \
+    provider_key: { \
+```
+
+#### 3. 修改後的完整 Python 設定區塊
+
+修改完成後，`Dockerfile` 中的 `RUN python3 -c` 區塊最終內容如下：
+
+```dockerfile
+RUN python3 -c "\
+import base64, json, os, secrets; \
+from urllib.parse import urlparse; \
+model = os.environ['NEMOCLAW_MODEL']; \
+chat_ui_url = os.environ['CHAT_UI_URL']; \
+provider_key = os.environ['NEMOCLAW_PROVIDER_KEY']; \
+primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
+inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
+inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
+inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
+parsed = urlparse(chat_ui_url); \
+chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
+origins = ['http://127.0.0.1:18789']; \
+origins = list(dict.fromkeys(origins + [chat_origin])); \
+ollama_models = [ \
+    {'id': 'glm-5:cloud', 'name': 'GLM-5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'minimax-m2.7:cloud', 'name': 'MiniMax M2.7 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'kimi-k2.5:cloud', 'name': 'Kimi K2.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'qwen3.5:cloud', 'name': 'Qwen3.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+    {'id': 'deepseek-v3.2:cloud', 'name': 'DeepSeek V3.2 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \
+]; \
+providers = { \
+    'ollama': { \
+        'baseUrl': inference_base_url, \
+        'apiKey': 'ollama', \
+        'api': 'openai-completions', \
+        'models': ollama_models \
+    }, \
+    provider_key: { \
+        'baseUrl': inference_base_url, \
+        'apiKey': 'unused', \
+        'api': inference_api, \
+        'models': [{**({'compat': inference_compat} if inference_compat else {}), 'id': model, 'name': primary_model_ref, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
+    } \
+}; \
+config = { \
+    'agents': {'defaults': {'model': {'primary': 'ollama/glm-5:cloud', 'fallbacks': ['ollama/minimax-m2.7:cloud', 'ollama/kimi-k2.5:cloud', 'ollama/qwen3.5:cloud', 'ollama/deepseek-v3.2:cloud', 'inference/nvidia/nemotron-3-super-120b-a12b']}}}, \
+    'models': {'mode': 'merge', 'providers': providers}, \
     'channels': {'defaults': {'configWrites': False}}, \
     'gateway': { \
         'mode': 'local', \
@@ -569,11 +582,15 @@ json.dump(config, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
 ```
 
-### 重新 Onboard（套用變更）
+### 重新建置基底映像並 Onboard（套用變更）
 
-修改 Dockerfile 後，重新執行 Onboard 以重建沙箱映像：
+由於修改了 `Dockerfile.base`，需先重建基底映像，再執行 Onboard：
 
 ```bash
+# 重建基底映像（僅在修改 Dockerfile.base 後需要）
+docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
+
+# 重新執行 Onboard 以重建沙箱映像
 NEMOCLAW_NON_INTERACTIVE=1 \
 NEMOCLAW_SANDBOX_NAME=my-assistant \
 NEMOCLAW_PROVIDER=ollama \
@@ -998,11 +1015,11 @@ newgrp docker
 cd NemoClaw
 
 # 更新 package.json 中的 openclaw 版本
-# 將 "openclaw": "2026.3.11" 改為 "openclaw": "2026.3.23"（或更新版本）
+# 將 "openclaw": "2026.3.11" 改為 "openclaw": "2026.3.24"（或更新版本）
 nano package.json
 
-# 同步更新 Dockerfile
-sed -i 's/openclaw@2026\.3\.11/openclaw@2026.3.23/g' Dockerfile test/Dockerfile.sandbox
+# 同步更新 Dockerfile.base（OpenClaw CLI 版本釘選在基底映像中）
+sed -i 's/openclaw@2026\.3\.11/openclaw@2026.3.24/g' Dockerfile.base test/Dockerfile.sandbox
 
 # 重新安裝
 npm install
@@ -1280,59 +1297,16 @@ else
 fi
 
 # ─── 6. 修改 Dockerfile 寫入 ollama 提供者 + 備援鏈 ───────────
-echo "[6/7] 設定 ollama 提供者與模型備援鏈至 Dockerfile..."
-NEMOCLAW_DIR=$(npm root -g 2>/dev/null | sed 's|/node_modules||')/NemoClaw
-for candidate in "$NEMOCLAW_DIR" "$HOME/NemoClaw" "$HOME/nemo-claw" "$(pwd)"; do
-  if [ -f "$candidate/Dockerfile" ]; then
-    NEMOCLAW_DIR="$candidate"
-    break
-  fi
-done
-
-if [ -f "$NEMOCLAW_DIR/Dockerfile" ]; then
-  python3 << PATCH
-import re
-with open("$NEMOCLAW_DIR/Dockerfile") as f:
-    content = f.read()
-
-# 升級 openclaw 版本
-content = re.sub(r'openclaw@[\d.]+', 'openclaw@2026.3.23', content)
-
-# 插入 ollama_models 定義
-ollama_models = '''ollama_models = [ \\\\
-    {'id': 'glm-5:cloud', 'name': 'GLM-5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\\\
-    {'id': 'minimax-m2.7:cloud', 'name': 'MiniMax M2.7 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\\\
-    {'id': 'kimi-k2.5:cloud', 'name': 'Kimi K2.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\\\
-    {'id': 'qwen3.5:cloud', 'name': 'Qwen3.5 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\\\
-    {'id': 'deepseek-v3.2:cloud', 'name': 'DeepSeek V3.2 Cloud', 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}, \\\\
-]; \\\\'''
-content = content.replace("config = { \\\\", ollama_models + "\nconfig = { \\\\")
-
-# 替換 agents.defaults.model
-content = content.replace(
-    "'agents': {'defaults': {'model': {'primary': f'inference/{model}'}}},",
-    "'agents': {'defaults': {'model': {'primary': 'ollama/glm-5:cloud', 'fallbacks': ['ollama/minimax-m2.7:cloud', 'ollama/kimi-k2.5:cloud', 'ollama/qwen3.5:cloud', 'ollama/deepseek-v3.2:cloud', 'inference/nvidia/nemotron-3-super-120b-a12b']}}},"
-)
-
-# 插入 ollama 提供者
-content = content.replace(
-    "        'nvidia': {",
-    "        'ollama': { \\\\\n"
-    "            'baseUrl': 'https://inference.local/v1', \\\\\n"
-    "            'apiKey': 'ollama', \\\\\n"
-    "            'api': 'openai-completions', \\\\\n"
-    "            'models': ollama_models \\\\\n"
-    "        }, \\\\\n"
-    "        'nvidia': {"
-)
-
-with open("$NEMOCLAW_DIR/Dockerfile", "w") as f:
-    f.write(content)
-print("  ✓ Dockerfile 已寫入：ollama 提供者 + 備援模型鏈")
-PATCH
-else
-  echo "  ⚠ 找不到 Dockerfile，備援鏈需手動設定"
-fi
+echo "[6/7] 設定 ollama 提供者與模型備援鏈..."
+echo "  請依照以下步驟手動修改 Dockerfile.base 與 Dockerfile："
+echo ""
+echo "  1. 開啟 Dockerfile.base，將 openclaw@<舊版本> 改為 openclaw@2026.3.24"
+echo "  2. 開啟 Dockerfile，在 RUN python3 -c 區塊中："
+echo "     a. 在 providers = { 之前加入 ollama_models 列表"
+echo "     b. 將 agents.defaults.model 改為 ollama 備援鏈"
+echo "     c. 在 providers 中加入 ollama 提供者"
+echo "  詳見安裝指南「第六步：設定模型備援鏈」。"
+echo "  ✓ 請完成上述修改後繼續"
 
 # ─── 7. 安裝 NemoClaw（使用修改後的 Dockerfile）───────────────
 echo "[7/7] 安裝 NemoClaw..."
@@ -1382,36 +1356,21 @@ NemoClaw 沙箱已預設允許 Discord 網路端點（discord.com、gateway.disc
 
 由於 `openclaw.json` 在沙箱內為唯讀（root:root, chmod 444），必須在 Dockerfile 建置時寫入 Discord 插件設定。
 
-在 NemoClaw 原始碼目錄中，使用 Python 腳本修改 Dockerfile：
+開啟 `Dockerfile`，找到 `RUN python3 -c` 設定產生區塊中的 `config = {` 字典。在 `'channels'` 鍵之前加入 `'plugins'` 設定：
 
-```bash
-cd ~/nemo-claw  # 或你的 NemoClaw 原始碼目錄
+```python
+# 修改前
+    'channels': {'defaults': {'configWrites': False}}, \
 
-python3 << 'PATCH'
-import re
-
-with open("Dockerfile") as f:
-    content = f.read()
-
-# 在 'channels' 之前插入 Discord 插件設定
-# 匹配任何形式的 channels 行（可能已被先前修改過）
-content = re.sub(
-    r"'channels': \{[^}]*\},",
-    "'plugins': {'entries': {'discord': {'enabled': True}}}, \\\\\n"
-    "    'channels': {},",
-    content
-)
-
-with open("Dockerfile", "w") as f:
-    f.write(content)
-print("✓ Dockerfile 已啟用 Discord 插件")
-PATCH
+# 修改後
+    'plugins': {'entries': {'discord': {'enabled': True}}}, \
+    'channels': {'defaults': {'configWrites': False}}, \
 ```
 
 > **說明：**
 >
 > - Discord Bot Token **不寫入** `openclaw.json`，而是透過 `DISCORD_BOT_TOKEN` 環境變數在沙箱建立時傳入
-> - 此腳本使用正則表達式匹配 `'channels': {...},`，無論 Dockerfile 是否已被先前修改過都能正確插入
+> - 修改位置在 `Dockerfile` 的 `config` 字典定義中，`'channels'` 行之前
 
 ### 步驟 4：設定 Token 並重新 Onboard
 
