@@ -18,6 +18,8 @@ draft_newsletter_*
 research/
 specs/
 vdr-notes/
+Dockerfiles/
+
 
 # Security: secrets, credentials, and keys
 *_ecdsa
