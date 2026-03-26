@@ -245,7 +245,7 @@ interface HostOpenClawState {
 }
 
 interface SnapshotManifest {
-  version: number;                // SNAPSHOT_VERSION = 2
+  version: number;                // SNAPSHOT_VERSION = 3
   createdAt: string;
   homeDir: string;
   stateDir: string;
@@ -331,7 +331,7 @@ function createArchiveFromDirectory(sourceDir, archivePath): void
 
 ```typescript
 SANDBOX_MIGRATION_DIR = "/sandbox/.nemoclaw/migration"
-SNAPSHOT_VERSION = 2
+SNAPSHOT_VERSION = 3
 ```
 
 ## 編譯設定（tsconfig.json）
