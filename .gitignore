@@ -19,6 +19,7 @@ research/
 specs/
 vdr-notes/
 Dockerfiles/
+Dockerfile
 
 
 # Security: secrets, credentials, and keys
