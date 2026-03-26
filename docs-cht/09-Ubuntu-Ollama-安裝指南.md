@@ -253,6 +253,14 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git
 cd NemoClaw
 
+# 套用客製化 Dockerfile（ollama 備援鏈 + Discord + .openclaw-data）
+cp Dockerfile.default Dockerfile
+cp Dockerfile.base-default Dockerfile.base
+mkdir -p .openclaw-data
+
+# 重建基底映像（升級 OpenClaw CLI 至 2026.3.24）
+docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
+
 # 安裝根層級相依
 npm install
 
@@ -453,7 +461,23 @@ NEMOCLAW_POLICY_PRESETS=pypi,npm,docker,huggingface,telegram,telegram,outlook
 
 > **重要：** 僅修改 `agents.defaults.model` 的備援鏈是不夠的。OpenClaw 根據模型 ID 前綴（如 `ollama/`）查找 `models.providers` 中對應的提供者。若 `ollama` 提供者不存在，所有 `ollama/*` 模型都無法使用，會回退到預設的 `inference/nvidia/nemotron-3-super-120b-a12b`。
 
-### 修改 Dockerfile.base 與 Dockerfile
+### 快捷方式：使用預建的客製化 Dockerfile
+
+專案目錄下提供了已包含所有客製化設定的預建檔案，可直接覆蓋使用：
+
+```bash
+cd ~/NemoClaw  # 或你的 NemoClaw 原始碼目錄
+
+# 覆蓋 Dockerfile（已含 ollama 提供者、備援鏈、Discord 插件、.openclaw-data 同步）
+cp Dockerfile.default Dockerfile
+
+# 覆蓋 Dockerfile.base（已升級 OpenClaw CLI 至 2026.3.24）
+cp Dockerfile.base-default Dockerfile.base
+```
+
+> **說明：** 原始的 `Dockerfile` 和 `Dockerfile.base` 已從 Git 移除（列入 `.gitignore`），覆蓋後不會與遠端衝突。以下為手動修改的詳細說明，若使用預建檔案可跳至「重新建置基底映像並 Onboard」。
+
+### 手動修改 Dockerfile.base 與 Dockerfile
 
 NemoClaw 採用雙層 Dockerfile 架構：
 
@@ -581,6 +605,34 @@ path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 json.dump(config, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
 ```
+
+### .openclaw-data 自訂檔案注入
+
+專案根目錄下的 `.openclaw-data/` 目錄用於存放需要注入沙箱的自訂檔案（skills、hooks、identity 等）。此目錄已排除在 Git 之外。
+
+```bash
+# 建立目錄結構（依需求選擇）
+mkdir -p .openclaw-data/skills/my-skill
+mkdir -p .openclaw-data/hooks
+mkdir -p .openclaw-data/identity
+
+# 範例：放入自訂 Skill
+echo "Your skill content..." > .openclaw-data/skills/my-skill/SKILL.md
+
+# 範例：放入 identity 檔案
+echo "Your identity..." > .openclaw-data/identity/IDENTITY.md
+```
+
+**建置時注入**：Onboard 時 `.openclaw-data/` 的內容會透過 `Dockerfile` 的 `COPY` 指令自動複製至沙箱的 `/sandbox/.openclaw-data/`（可寫區域），在安全鎖定前完成。
+
+**執行時同步**：沙箱運行中修改了 Host 端的 `.openclaw-data/` 檔案後，無需重建映像，使用同步腳本即可即時更新：
+
+```bash
+# 將 Host 端 .openclaw-data/ 同步至運行中的沙箱
+./scripts/sync-openclaw-data.sh my-assistant
+```
+
+> **為何不用 Docker bind mount？** OpenShell 管理容器生命週期，`openshell sandbox create` 不暴露 `-v` 參數。bind mount 也會繞過 Landlock 檔案系統安全策略，與 NemoClaw 的隔離設計衝突。
 
 ### 重新建置基底映像並 Onboard（套用變更）
 
@@ -1009,17 +1061,25 @@ newgrp docker
 
 **原因：** `openclaw` 版本過低（如 2026.3.11），其相依的 `node-llama-cpp` 預建二進位檔不相容當前平台，回退至從原始碼編譯，但 Docker 容器內缺少 `cmake` 和 `make` 等建置工具。
 
-**解決：** 升級 `openclaw` 至最新版本。若使用從原始碼安裝：
+**解決：** 升級 `openclaw` 至最新版本。最快的方式是使用預建檔案：
 
 ```bash
 cd NemoClaw
 
-# 更新 package.json 中的 openclaw 版本
-# 將 "openclaw": "2026.3.11" 改為 "openclaw": "2026.3.24"（或更新版本）
-nano package.json
+# 快捷方式：使用已升級至 2026.3.24 的預建檔案
+cp Dockerfile.base-default Dockerfile.base
+docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
+```
 
-# 同步更新 Dockerfile.base（OpenClaw CLI 版本釘選在基底映像中）
-sed -i 's/openclaw@2026\.3\.11/openclaw@2026.3.24/g' Dockerfile.base test/Dockerfile.sandbox
+或手動修改：
+
+```bash
+# 更新 Dockerfile.base 中的 openclaw 版本（版本釘選在基底映像中）
+# 將 openclaw@2026.3.11 改為 openclaw@2026.3.24
+nano Dockerfile.base
+
+# 更新 package.json 中的 openclaw 版本
+nano package.json
 
 # 重新安裝
 npm install
@@ -1296,17 +1356,27 @@ else
   exit 1
 fi
 
-# ─── 6. 修改 Dockerfile 寫入 ollama 提供者 + 備援鏈 ───────────
-echo "[6/7] 設定 ollama 提供者與模型備援鏈..."
-echo "  請依照以下步驟手動修改 Dockerfile.base 與 Dockerfile："
-echo ""
-echo "  1. 開啟 Dockerfile.base，將 openclaw@<舊版本> 改為 openclaw@2026.3.24"
-echo "  2. 開啟 Dockerfile，在 RUN python3 -c 區塊中："
-echo "     a. 在 providers = { 之前加入 ollama_models 列表"
-echo "     b. 將 agents.defaults.model 改為 ollama 備援鏈"
-echo "     c. 在 providers 中加入 ollama 提供者"
-echo "  詳見安裝指南「第六步：設定模型備援鏈」。"
-echo "  ✓ 請完成上述修改後繼續"
+# ─── 6. 套用客製化 Dockerfile（ollama 提供者 + 備援鏈 + Discord）─
+echo "[6/7] 套用客製化 Dockerfile..."
+NEMOCLAW_DIR=""
+for candidate in "$HOME/NemoClaw" "$HOME/nemo-claw" "/opt/NemoClaw"; do
+  if [ -f "$candidate/Dockerfile.default" ]; then
+    NEMOCLAW_DIR="$candidate"
+    break
+  fi
+done
+if [ -n "$NEMOCLAW_DIR" ] && [ -f "$NEMOCLAW_DIR/Dockerfile.default" ]; then
+  cp "$NEMOCLAW_DIR/Dockerfile.default" "$NEMOCLAW_DIR/Dockerfile"
+  cp "$NEMOCLAW_DIR/Dockerfile.base-default" "$NEMOCLAW_DIR/Dockerfile.base"
+  # 建立 .openclaw-data 目錄（若不存在）
+  mkdir -p "$NEMOCLAW_DIR/.openclaw-data"
+  # 重建基底映像
+  cd "$NEMOCLAW_DIR"
+  docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
+  echo "  ✓ 已套用客製化 Dockerfile（ollama + 備援鏈 + Discord + .openclaw-data）"
+else
+  echo "  ⚠ 找不到 Dockerfile.default，請手動參照安裝指南「第六步」修改"
+fi
 
 # ─── 7. 安裝 NemoClaw（使用修改後的 Dockerfile）───────────────
 echo "[7/7] 安裝 NemoClaw..."
@@ -1352,11 +1422,11 @@ NemoClaw 沙箱已預設允許 Discord 網路端點（discord.com、gateway.disc
    - Add Reactions
 4. 複製生成的 URL，用瀏覽器開啟並選擇目標伺服器
 
-### 步驟 3：修改 Dockerfile 加入 Discord 插件設定
+### 步驟 3：確認 Dockerfile 已啟用 Discord 插件
 
-由於 `openclaw.json` 在沙箱內為唯讀（root:root, chmod 444），必須在 Dockerfile 建置時寫入 Discord 插件設定。
+若已使用預建的 `Dockerfile.default`（見「第六步：快捷方式」），Discord 插件**已預設啟用**，可跳過此步驟。
 
-開啟 `Dockerfile`，找到 `RUN python3 -c` 設定產生區塊中的 `config = {` 字典。在 `'channels'` 鍵之前加入 `'plugins'` 設定：
+若手動修改 Dockerfile，開啟 `Dockerfile`，找到 `RUN python3 -c` 設定產生區塊中的 `config = {` 字典。在 `'channels'` 鍵之前加入 `'plugins'` 設定：
 
 ```python
 # 修改前
@@ -1451,6 +1521,19 @@ nemoclaw my-assistant policy-add
 
 # 列出已套用策略
 nemoclaw my-assistant policy-list
+```
+
+### 檔案同步
+
+```bash
+# 將 Host 端 .openclaw-data/ 同步至運行中的沙箱（無需重建映像）
+./scripts/sync-openclaw-data.sh my-assistant
+
+# 手動上傳單一檔案
+openshell sandbox upload my-assistant ./my-file.md /sandbox/.openclaw-data/
+
+# 從沙箱下載檔案
+openshell sandbox download my-assistant /sandbox/.openclaw-data/skills/ /tmp/skills-backup/
 ```
 
 ### 管理操作
