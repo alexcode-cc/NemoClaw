@@ -1036,6 +1036,160 @@ git config --unset core.hooksPath
 npm install
 ```
 
+### 沙箱內無法存取 Internet
+
+**症狀：** 沙箱內的 Agent（如 Claude）嘗試存取外部網站時失敗，出現連線逾時、Connection refused 或 403 Forbidden 等錯誤。`curl`、`wget` 等工具也無法連線。
+
+**原因：** 這是 NemoClaw 的**預設拒絕（deny-by-default）安全設計**，而非故障。沙箱的網路策略僅允許存取明確列入白名單的端點，所有未列入的連線都會被 OpenShell 攔截並封鎖。
+
+#### 預設允許的端點
+
+基礎策略（`nemoclaw-blueprint/policies/openclaw-sandbox.yaml`）僅允許以下端點：
+
+| 策略 | 允許的端點 | 允許的二進位檔 |
+|------|-----------|----------------|
+| `claude_code` | api.anthropic.com, statsig.anthropic.com, sentry.io | claude |
+| `nvidia` | integrate.api.nvidia.com, inference-api.nvidia.com | claude, openclaw |
+| `github` | github.com, api.github.com | gh, git |
+| `npm_registry` | registry.npmjs.org | openclaw, npm |
+| `telegram` | api.telegram.org | node |
+| `discord` | discord.com, gateway.discord.gg | node |
+
+**未列入的端點（如 Google、Stack Overflow、任何自訂 API）一律被封鎖。**
+
+此外，即使端點已列入白名單，**只有指定的二進位檔**才能存取。例如 `curl` 和 `wget` 不在任何策略的 binaries 清單中，因此即使目標端點已允許，這些工具也無法連線。
+
+#### 解決方法一：即時核准（臨時，僅限當前會話）
+
+透過 OpenShell TUI 即時核准被封鎖的請求：
+
+```bash
+# 開啟 TUI 監控面板
+openshell term
+```
+
+TUI 會顯示被封鎖的請求（包含目標 host、port、發起的二進位檔），操作者可即時核准或拒絕。核准後的端點在沙箱重啟前有效。
+
+#### 解決方法二：動態套用策略（臨時，僅限當前會話）
+
+使用 OpenShell CLI 動態套用策略預設集或自訂策略：
+
+```bash
+# 套用預設集（例如允許 PyPI 套件安裝）
+openshell policy set nemoclaw-blueprint/policies/presets/pypi.yaml
+
+# 套用 npm 預設集
+openshell policy set nemoclaw-blueprint/policies/presets/npm.yaml
+```
+
+可用的策略預設集：
+
+| 預設集 | 允許的端點 | 用途 |
+|--------|-----------|------|
+| `pypi` | pypi.org, files.pythonhosted.org | Python 套件安裝 |
+| `npm` | registry.npmjs.org, registry.yarnpkg.com | Node.js 套件安裝 |
+| `docker` | registry-1.docker.io, nvcr.io | 容器映像拉取 |
+| `huggingface` | huggingface.co, cdn-lfs.huggingface.co | ML 模型下載 |
+| `slack` | slack.com, api.slack.com | Slack 整合 |
+| `jira` | *.atlassian.net | Jira 整合 |
+| `outlook` | graph.microsoft.com, outlook.office365.com | Outlook 整合 |
+
+**注意：** 動態變更僅在當前會話有效，沙箱重啟後恢復為基礎策略。
+
+#### 解決方法三：修改基礎策略（永久）
+
+若需永久允許特定端點，編輯基礎策略檔案後重新 onboard：
+
+```bash
+# 編輯策略檔案
+nano nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+```
+
+在 `network_policies:` 區段新增端點，例如允許 `curl` 存取自訂 API：
+
+```yaml
+  my_custom_api:
+    name: my_custom_api
+    endpoints:
+      - host: "api.example.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow:
+              method: "*"
+              path: "/**"
+    binaries:
+      - { path: /usr/bin/curl }
+      - { path: /usr/local/bin/node }
+```
+
+然後重新執行 onboard 套用新策略：
+
+```bash
+nemoclaw onboard
+```
+
+#### 解決方法四：建立自訂策略預設集
+
+將自訂端點寫成獨立的預設集 YAML 檔案，方便重複使用：
+
+```bash
+# 建立自訂預設集
+cat > nemoclaw-blueprint/policies/presets/my-api.yaml << 'EOF'
+my_custom_api:
+  name: my_custom_api
+  endpoints:
+    - host: "api.example.com"
+      port: 443
+      protocol: rest
+      enforcement: enforce
+      tls: terminate
+      access: full
+  binaries:
+    - { path: /usr/bin/curl }
+    - { path: /usr/local/bin/node }
+    - { path: /usr/local/bin/claude }
+EOF
+
+# 動態套用（臨時）
+openshell policy set nemoclaw-blueprint/policies/presets/my-api.yaml
+
+# 或合併至基礎策略後重新 onboard（永久）
+```
+
+#### 常見誤解
+
+| 誤解 | 事實 |
+|------|------|
+| 「沙箱壞了，無法上網」 | 這是安全設計，非故障 |
+| 「安裝 pypi/npm preset 就能自由上網」 | 預設集僅開放特定套件管理器的端點，不是通用 Internet 存取 |
+| 「核准一次就永久生效」 | TUI 核准僅限當前會話，重啟後需重新核准或修改基礎策略 |
+| 「任何程式都能存取白名單端點」 | 僅策略中列出的 binaries 可以存取，curl/wget 通常不在清單中 |
+
+#### 相關指令速查
+
+```bash
+# 查看沙箱狀態與推論提供者
+nemoclaw my-assistant status
+
+# 開啟 TUI 監控
+openshell term
+
+# 查看當前策略
+openshell policy get
+
+# 動態套用策略
+openshell policy set <policy-file>
+
+# 列出已套用的策略預設集
+nemoclaw my-assistant policy-list
+
+# 互動式新增策略預設集
+nemoclaw my-assistant policy-add
+```
+
 ## 完整非互動安裝腳本（從零開始）
 
 將以下內容儲存為 `setup-nemoclaw.sh`，可在全新的 Ubuntu 24.04 環境上一鍵完成所有安裝與設定。
