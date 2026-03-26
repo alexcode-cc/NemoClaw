@@ -46,3 +46,6 @@ secrets.json
 secrets.yaml
 service-account*.json
 token.json
+
+package-lock.json
+yarn.lock
