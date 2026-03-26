@@ -1414,6 +1414,14 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
   run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
+  // Copy .openclaw-data if present — custom files (skills, hooks, identity)
+  // injected into the sandbox's writable area at build time.
+  const openclawDataDir = path.join(ROOT, ".openclaw-data");
+  if (fs.existsSync(openclawDataDir)) {
+    run(`cp -r "${openclawDataDir}" "${buildCtx}/.openclaw-data"`);
+  } else {
+    run(`mkdir -p "${buildCtx}/.openclaw-data"`);
+  }
   run(`rm -rf "${buildCtx}/nemoclaw/node_modules"`, { ignoreError: true });
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
