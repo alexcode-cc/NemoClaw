@@ -734,6 +734,162 @@ openclaw agent --agent main --local -m "hello" --session-id test
 nemoclaw my-assistant logs --follow
 ```
 
+## 變更設定：增量更新 vs 完整重建
+
+NemoClaw 的架構分為**閘道（Gateway）**和**沙箱（Sandbox）**兩層。並非所有設定變更都需要完整重建。以下矩陣幫助你判斷「改了什麼 → 最少需要做什麼」，節省測試時間。
+
+### 架構理解：什麼在建置時固定、什麼可以執行時變更
+
+| 層級 | 建置時固定（baked） | 執行時可變（runtime） |
+|------|---------------------|----------------------|
+| **閘道** | OpenShell 版本、K3s 叢集 | 推論提供者、憑證、推論路由 |
+| **沙箱映像** | 插件程式碼、Blueprint、`openclaw.json`、Chat UI URL、`.openclaw-data` | 網路策略 |
+| **沙箱容器** | 名稱 | `.openclaw-data/` 內的檔案（透過 upload） |
+
+### 變更對照表
+
+| 變更項目 | 最少操作 | 預估時間 | 需重建沙箱？ | 需重建閘道？ |
+|----------|----------|----------|:------------:|:------------:|
+| 切換推論模型或提供者 | `openshell inference set` | ~1 分鐘 | 否 | 否 |
+| 更新 API 金鑰 | `openshell provider update` | ~1 分鐘 | 否 | 否 |
+| 修改提供者端點 URL | `openshell provider update` | ~1 分鐘 | 否 | 否 |
+| 新增/修改網路策略 | `openshell policy set` | ~1 分鐘 | 否 | 否 |
+| 同步 `.openclaw-data/` 檔案 | `sync-openclaw-data.sh` | ~1 分鐘 | 否 | 否 |
+| 修改插件程式碼或 Blueprint | 重建沙箱 | ~5-10 分鐘 | **是** | 否 |
+| 修改 Dockerfile 的 Python 設定 | 重建沙箱 | ~5-10 分鐘 | **是** | 否 |
+| 變更 Chat UI URL | 重建沙箱 | ~5-10 分鐘 | **是** | 否 |
+| 變更沙箱名稱 | 重建沙箱 | ~5-10 分鐘 | **是** | 否 |
+| 變更 Bot Token（Discord/Slack） | 重建沙箱 | ~5-10 分鐘 | **是** | 否 |
+| 升級 OpenClaw CLI 版本 | 重建基底映像 + 沙箱 | ~10-15 分鐘 | **是** | 否 |
+| 升級 OpenShell 版本 | 完整重建 | ~15-20 分鐘 | **是** | **是** |
+
+### 操作等級詳解
+
+#### 等級 0：執行時更新（無需重建，~1 分鐘）
+
+適用於：切換模型、更新金鑰、調整網路策略、同步自訂檔案。
+
+```bash
+# ── 切換推論模型（不需重建沙箱）──
+openshell inference set --no-verify \
+  --provider ollama-local \
+  --model "qwen3.5:cloud"
+
+# 驗證
+nemoclaw my-assistant status
+
+# ── 更新 API 金鑰 ──
+export NVIDIA_API_KEY=nvapi-new-key-here
+openshell provider update nvidia-prod --credential "NVIDIA_API_KEY"
+
+# ── 動態套用網路策略 ──
+openshell policy set nemoclaw-blueprint/policies/presets/pypi.yaml
+
+# ── 同步自訂檔案到運行中的沙箱 ──
+./scripts/sync-openclaw-data.sh my-assistant
+```
+
+> **注意：** 網路策略和 TUI 核准的變更僅限當前會話，沙箱重啟後恢復為基礎策略。若需永久生效，請修改基礎策略後重建沙箱。
+
+#### 等級 1：僅重建沙箱（保留閘道，~5-10 分鐘）
+
+適用於：修改 Dockerfile 設定（模型備援鏈、Chat UI URL、Discord 插件）、更新插件程式碼、變更 Bot Token。
+
+**這是最常用的重建操作。** 閘道保持運行，只需銷毀並重建沙箱。
+
+```bash
+cd ~/NemoClaw
+
+# 若修改了 TypeScript 插件程式碼，先重新編譯
+# cd nemoclaw && npm run build && cd ..
+
+# 重建沙箱（閘道不受影響）
+NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+NEMOCLAW_PROVIDER=ollama \
+NEMOCLAW_MODEL=glm-5:cloud \
+NEMOCLAW_POLICY_MODE=suggested \
+NEMOCLAW_RECREATE_SANDBOX=1 \
+nemoclaw onboard --non-interactive
+```
+
+> **關鍵：** `NEMOCLAW_RECREATE_SANDBOX=1` 會自動銷毀同名舊沙箱並重建，無需手動 `nemoclaw my-assistant destroy`。閘道偵測到已存在時會跳過建立步驟。
+
+#### 等級 2：重建基底映像 + 沙箱（~10-15 分鐘）
+
+適用於：升級 OpenClaw CLI 版本、修改 `Dockerfile.base` 中的系統套件。
+
+```bash
+cd ~/NemoClaw
+
+# 1. 重建基底映像
+docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
+
+# 2. 重建沙箱（同等級 1）
+NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+NEMOCLAW_PROVIDER=ollama \
+NEMOCLAW_MODEL=glm-5:cloud \
+NEMOCLAW_POLICY_MODE=suggested \
+NEMOCLAW_RECREATE_SANDBOX=1 \
+nemoclaw onboard --non-interactive
+```
+
+#### 等級 3：完整重建閘道 + 沙箱（~15-20 分鐘）
+
+**僅在以下情況需要：**
+- 升級 OpenShell 版本
+- 閘道損壞或 Docker volume 異常
+- `openshell gateway start` 卡住或逾時
+
+```bash
+cd ~/NemoClaw
+
+# 1. 銷毀閘道（會同時銷毀所有沙箱）
+openshell gateway destroy -g nemoclaw
+docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs -r docker volume rm
+
+# 2. 完整重新 Onboard
+NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+NEMOCLAW_PROVIDER=ollama \
+NEMOCLAW_MODEL=glm-5:cloud \
+NEMOCLAW_POLICY_MODE=suggested \
+nemoclaw onboard --non-interactive
+```
+
+> **警告：** 銷毀閘道會**刪除所有沙箱**。沙箱內未備份的檔案將遺失。建議先執行 `./scripts/backup-workspace.sh my-assistant` 備份工作區。
+
+#### 等級 4：完整反安裝後重新安裝（最後手段）
+
+**僅在以下極端情況需要：**
+- 版本嚴重不相容，需要乾淨安裝
+- Node.js / npm 環境損壞
+- 要完全切換安裝方式（安裝腳本 ↔ 原始碼）
+
+```bash
+# 反安裝（保留 Docker 和 Ollama）
+nemoclaw uninstall --yes
+
+# 若需同時刪除 Ollama 模型
+# nemoclaw uninstall --yes --delete-models
+
+# 重新安裝...（回到「第四步：安裝 NemoClaw」）
+```
+
+### 常見場景快速指南
+
+| 場景 | 操作 | 等級 |
+|------|------|:----:|
+| 「我想試試不同的 Ollama 模型」 | `openshell inference set --provider ollama-local --model <model>` | 0 |
+| 「pip install 被擋了」 | `openshell policy set nemoclaw-blueprint/policies/presets/pypi.yaml` | 0 |
+| 「我改了 .openclaw-data/ 裡的 Skill」 | `./scripts/sync-openclaw-data.sh my-assistant` | 0 |
+| 「我改了 Dockerfile 的備援模型鏈」 | `nemoclaw onboard` + `NEMOCLAW_RECREATE_SANDBOX=1` | 1 |
+| 「我換了 DISCORD_BOT_TOKEN」 | 重新 `nemoclaw onboard` + `NEMOCLAW_RECREATE_SANDBOX=1` | 1 |
+| 「我升級了 Dockerfile.base 的 OpenClaw 版本」 | `docker build -f Dockerfile.base` 然後 onboard | 2 |
+| 「閘道壞了，重啟也沒用」 | `openshell gateway destroy` 然後 onboard | 3 |
+| 「什麼都試過了，環境徹底壞掉」 | `nemoclaw uninstall --yes` 然後重新安裝 | 4 |
+
 ## 重新開機後恢復
 
 OpenShell 閘道與沙箱埠轉發在系統重新開機後不會自動啟動，需要手動恢復或設定自動啟動。
