@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 NVIDIA NemoClaw is an open-source reference stack for running OpenClaw always-on assistants inside OpenShell sandboxes with NVIDIA inference support. It provides declarative policy control over network egress, filesystem access, and privilege escalation across multiple inference backends (NVIDIA Endpoint API, local NIM, vLLM, Ollama).
 
+## Prerequisites
+
+- Node.js >= 22.0.0
+- Python >= 3.11
+- [uv](https://docs.astral.sh/uv/) for Python dependency management
+
 ## Build & Development Commands
 
 ```bash
@@ -57,9 +63,12 @@ This is a polyglot monorepo with three layers:
 
 ### Vitest Configuration
 
-Two test projects defined in `vitest.config.ts`:
-- **cli**: `test/**/*.test.js` — integration tests for `bin/nemoclaw.js`
+Three test projects defined in `vitest.config.ts`:
+- **cli**: `test/**/*.test.{js,ts}` — integration tests for `bin/nemoclaw.js`
 - **plugin**: `nemoclaw/src/**/*.test.ts` — unit tests for the TypeScript plugin
+- **e2e-brev**: `test/e2e/brev-e2e.test.js` — end-to-end tests, only runs when `BREV_API_TOKEN` is set
+
+Coverage thresholds are enforced via `ci/coverage-threshold.json` (lines: 95%, functions: 98%, branches: 86%, statements: 95%).
 
 ## Conventions
 
@@ -76,16 +85,16 @@ Two test projects defined in `vitest.config.ts`:
 <footer>
 ```
 
-**type（必填）：**
+**type（必填，需與 `commitlint.config.js` 一致）：**
 - `feat`：新功能
 - `fix`：修復錯誤
 - `docs`：文件變更
-- `style`：格式調整（不影響程式邏輯）
 - `refactor`：重構（非新功能、非修復）
 - `test`：新增或修改測試
 - `chore`：建置流程或輔助工具變更
 - `perf`：效能改善
 - `ci`：CI/CD 變更
+- `merge`：合併提交
 
 **scope（選填）：** 影響範圍，例如 `cli`、`blueprint`、`plugin`、`docs`。
 
@@ -138,4 +147,5 @@ Do not add links to third-party code repositories or unofficial resources in doc
 
 - **TypeScript** (`nemoclaw/`): ESLint strict type-checked, Prettier (semicolons, double quotes, trailing commas, 100-char width, 2-space indent).
 - **Python** (`nemoclaw-blueprint/`): Ruff for linting/formatting, Pyright strict mode, 100-char line length.
+- **Dockerfiles**: Linted by Hadolint in CI.
 - SPDX license headers required on all source files.
