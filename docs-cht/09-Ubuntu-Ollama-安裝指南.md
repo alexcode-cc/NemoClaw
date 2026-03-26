@@ -625,12 +625,17 @@ echo "Your identity..." > .openclaw-data/identity/IDENTITY.md
 
 **建置時注入**：Onboard 時 `.openclaw-data/` 的內容會透過 `Dockerfile` 的 `COPY` 指令自動複製至沙箱的 `/sandbox/.openclaw-data/`（可寫區域），在安全鎖定前完成。
 
-**執行時同步**：沙箱運行中修改了 Host 端的 `.openclaw-data/` 檔案後，無需重建映像，使用同步腳本即可即時更新：
+**執行時同步（雙向）**：沙箱運行中可隨時在 Host 與沙箱之間雙向同步檔案，無需重建映像：
 
 ```bash
-# 將 Host 端 .openclaw-data/ 同步至運行中的沙箱
+# Host → 沙箱：將 Host 端修改推送至運行中的沙箱
 ./scripts/sync-openclaw-data.sh my-assistant
+
+# 沙箱 → Host：將沙箱內新建/修改的檔案拉回 Host 端
+./scripts/pull-openclaw-data.sh my-assistant
 ```
+
+> **重要：** 沙箱內建立的檔案（如新 Skill、修改的 Identity）**不會自動同步回 Host**。重建沙箱前務必先執行 `pull-openclaw-data.sh` 備份，否則沙箱內的變更會遺失。
 
 > **為何不用 Docker bind mount？** OpenShell 管理容器生命週期，`openshell sandbox create` 不暴露 `-v` 參數。bind mount 也會繞過 Landlock 檔案系統安全策略，與 NemoClaw 的隔離設計衝突。
 
@@ -1758,15 +1763,20 @@ nemoclaw my-assistant policy-list
 ### 檔案同步
 
 ```bash
-# 將 Host 端 .openclaw-data/ 同步至運行中的沙箱（無需重建映像）
+# Host → 沙箱：推送本地修改（無需重建映像）
 ./scripts/sync-openclaw-data.sh my-assistant
+
+# 沙箱 → Host：拉回沙箱內新建/修改的檔案
+./scripts/pull-openclaw-data.sh my-assistant
 
 # 手動上傳單一檔案
 openshell sandbox upload my-assistant ./my-file.md /sandbox/.openclaw-data/
 
-# 從沙箱下載檔案
+# 手動下載單一檔案
 openshell sandbox download my-assistant /sandbox/.openclaw-data/skills/ /tmp/skills-backup/
 ```
+
+> **建議流程：** 重建沙箱前先 `pull`，重建後再 `sync`。
 
 ### 管理操作
 
