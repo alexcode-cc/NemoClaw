@@ -1416,9 +1416,16 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
   // Copy .openclaw-data if present — custom files (skills, hooks, identity)
   // injected into the sandbox's writable area at build time.
+  // Excludes deep/large directories that exceed tar path length limits
+  // (OpenShell's tar header is capped at ~100 chars for entry paths).
   const openclawDataDir = path.join(ROOT, ".openclaw-data");
   if (fs.existsSync(openclawDataDir)) {
-    run(`cp -r "${openclawDataDir}" "${buildCtx}/.openclaw-data"`);
+    run(`mkdir -p "${buildCtx}/.openclaw-data"`);
+    // Use rsync with --exclude to skip known heavy directories, fall back to cp
+    const excludes = "--exclude='repositories' --exclude='node_modules' --exclude='.git' --exclude='__pycache__'";
+    const rsyncCmd = `rsync -a ${excludes} "${openclawDataDir}/" "${buildCtx}/.openclaw-data/"`;
+    const cpCmd = `cp -r "${openclawDataDir}" "${buildCtx}/.openclaw-data"`;
+    run(`command -v rsync >/dev/null 2>&1 && ${rsyncCmd} || ${cpCmd}`, { ignoreError: false });
   } else {
     run(`mkdir -p "${buildCtx}/.openclaw-data"`);
   }

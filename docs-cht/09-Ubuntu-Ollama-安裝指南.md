@@ -634,6 +634,8 @@ echo "Your identity..." > .openclaw-data/identity/IDENTITY.md
 
 > **為何不用 Docker bind mount？** OpenShell 管理容器生命週期，`openshell sandbox create` 不暴露 `-v` 參數。bind mount 也會繞過 Landlock 檔案系統安全策略，與 NemoClaw 的隔離設計衝突。
 
+> **路徑長度限制：** OpenShell 使用 tar 打包 build context，路徑長度上限約 100 字元。`.openclaw-data/` 內**不要放置深層目錄結構**（如完整的 Git 倉庫、`node_modules`），否則建置時會出現 `provided value is too long when setting path` 錯誤。以下目錄會在建置時自動排除：`repositories/`、`node_modules/`、`.git/`、`__pycache__/`。大型檔案請在沙箱啟動後用 `openshell sandbox upload` 或 `sync-openclaw-data.sh` 同步。
+
 ### 重新建置基底映像並 Onboard（套用變更）
 
 由於修改了 `Dockerfile.base`，需先重建基底映像，再執行 Onboard：
