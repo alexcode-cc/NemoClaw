@@ -634,7 +634,31 @@ echo "Your identity..." > .openclaw-data/identity/IDENTITY.md
 
 > **為何不用 Docker bind mount？** OpenShell 管理容器生命週期，`openshell sandbox create` 不暴露 `-v` 參數。bind mount 也會繞過 Landlock 檔案系統安全策略，與 NemoClaw 的隔離設計衝突。
 
-> **路徑長度限制：** OpenShell 使用 tar 打包 build context，路徑長度上限約 100 字元。`.openclaw-data/` 內**不要放置深層目錄結構**（如完整的 Git 倉庫、`node_modules`），否則建置時會出現 `provided value is too long when setting path` 錯誤。以下目錄會在建置時自動排除：`repositories/`、`node_modules/`、`.git/`、`__pycache__/`。大型檔案請在沙箱啟動後用 `openshell sandbox upload` 或 `sync-openclaw-data.sh` 同步。
+> **路徑長度限制：** OpenShell 使用 tar 打包 build context，路徑長度上限約 100 字元。`.openclaw-data/` 內**不要放置深層目錄結構**（如完整的 Git 倉庫、`node_modules`），否則建置時會出現 `provided value is too long when setting path` 錯誤。以下目錄會在建置時自動排除：`repositories/`、`node_modules/`、`.git/`、`__pycache__/`。
+>
+> **解決方法：先壓縮再進沙箱解壓。** 將深層子目錄壓縮成 `.tgz` 檔案後放入 `.openclaw-data/`，建置時只複製壓縮檔（路徑短），進入沙箱後再解壓：
+>
+> ```bash
+> # 建置前：在 Host 端壓縮深層目錄
+> cd .openclaw-data
+> tar czf workspace.tgz workspace/
+> rm -rf workspace/
+>
+> # 建置成功後：進入沙箱解壓
+> nemoclaw my-assistant connect
+> cd /sandbox/.openclaw-data
+> tar xzf workspace.tgz && rm workspace.tgz
+> ```
+>
+> 此方法安全可行，因為路徑長度限制**僅存在於建置階段**（tar 打包 build context），不影響沙箱運行：
+>
+> | 階段 | 機制 | 路徑限制 |
+> |------|------|:--------:|
+> | 建置時（`openshell sandbox create`） | tar 打包 → Docker build | 有（~100 字元） |
+> | 運行時（沙箱內部） | 標準 Linux ext4 檔案系統 | 無（上限 4096 字元） |
+> | 離開沙箱 / 重啟沙箱 | 從已建置的映像啟動，不重新 build | 無 |
+>
+> 只有**重新執行 `nemoclaw onboard` 重建沙箱映像**時才會再走一次 tar 打包流程。日常的沙箱啟動、停止、重新連線都不會觸發重新打包。
 
 ### 重新建置基底映像並 Onboard（套用變更）
 
