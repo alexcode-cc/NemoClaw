@@ -1781,16 +1781,18 @@ nemoclaw onboard --non-interactive
 沙箱內                                        Host 端
 ┌──────────────────────┐                ┌─────────────────┐
 │ Claude Code          │                │                 │
-│   ANTHROPIC_BASE_URL ├───inference────►  Ollama 0.14+   │
-│   = inference.local  │    .local      │  :11434         │
-│                      │   (閘道代理)    │                 │
+│   ANTHROPIC_BASE_URL ├──直連──────────►  Ollama 0.14+   │
+│   = host.openshell   │  (Anthropic    │  :11434         │
+│     .internal:11434  │   Messages API)│                 │
+│                      │                │                 │
 │ OpenClaw Agent       │                │                 │
-│   同樣走 inference   ├───inference────►  (同上)          │
-│   .local 代理        │    .local      │                 │
+│   走 inference.local ├──閘道代理──────►  (同上)          │
+│   (OpenAI-compat)    │                │                 │
 └──────────────────────┘                └─────────────────┘
 ```
 
-Claude Code 和 OpenClaw Agent 都透過 `inference.local`（OpenShell 閘道代理）存取 Ollama，不需要額外的網路策略。
+**Claude Code** 直連 Host Ollama（需 `ollama-local` 網路策略），使用 Anthropic Messages API 格式。
+**OpenClaw Agent** 透過 `inference.local` 閘道代理（OpenAI-compatible），不需額外策略。
 
 ### 前置條件
 
@@ -1863,20 +1865,40 @@ claude --version
 nemoclaw my-assistant connect
 ```
 
-#### 步驟 2：設定環境變數
+#### 步驟 2：套用 ollama-local 網路策略（Host 端，每次重建沙箱後需重新套用）
+
+Claude Code 使用 Anthropic Messages API 格式，但 `inference.local` 閘道代理僅支援 OpenAI-compatible 格式（會回報 `no compatible inference route available`）。因此 Claude Code 必須**直連 Host Ollama**，需要 `ollama-local` 網路策略。
 
 ```bash
-# 在沙箱內
-export ANTHROPIC_AUTH_TOKEN=ollama
-export ANTHROPIC_BASE_URL=https://inference.local
-
-# 驗證連線（透過閘道代理存取 Ollama）
-curl -s https://inference.local/v1/models 2>/dev/null | head -5
+# Host 端執行（非沙箱內）
+cd ~/nemo-claw
+openshell policy set nemoclaw-blueprint/policies/presets/ollama-local.yaml
 ```
 
-> **說明：** `inference.local` 是 OpenShell 閘道的推論代理端點。閘道會將請求轉發至 Host 端的 Ollama（`host.openshell.internal:11434`），不需要額外的網路策略。使用 `https://inference.local`（不含 `/v1`），因為 Claude Code 使用 Anthropic Messages API 格式。
+> **注意：** 此為動態策略，沙箱重建後需重新套用。若需永久生效，將 `ollama-local` 合併至 `openclaw-sandbox.yaml` 基礎策略。
 
-#### 步驟 3：啟動 Claude Code
+#### 步驟 3：設定環境變數（已自動完成）
+
+使用 `Dockerfile.default` 建置的沙箱，環境變數已在建置時自動寫入 `/sandbox/.bashrc`：
+
+```bash
+# 在沙箱內確認
+grep ANTHROPIC ~/.bashrc
+# 預期輸出：
+# export ANTHROPIC_AUTH_TOKEN=ollama
+# export ANTHROPIC_BASE_URL=http://host.openshell.internal:11434
+```
+
+若未使用 `Dockerfile.default`，手動設定：
+
+```bash
+export ANTHROPIC_AUTH_TOKEN=ollama
+export ANTHROPIC_BASE_URL=http://host.openshell.internal:11434
+```
+
+> **說明：** `host.openshell.internal` 是 OpenShell 提供的 DNS 名稱，指向 Host 的 Docker gateway IP。Ollama 在 Host 端監聽 `0.0.0.0:11434`（已在第二步設定），沙箱透過此路徑直接存取 Ollama 的 Anthropic Messages API。
+
+#### 步驟 4：啟動 Claude Code
 
 ```bash
 # 使用已在 Onboard 時設定的主要模型
@@ -1888,20 +1910,6 @@ claude --model qwen3.5:cloud
 claude --model kimi-k2.5:cloud
 ```
 
-#### 步驟 4：環境變數持久化（已自動完成）
-
-使用 `Dockerfile.default` 建置的沙箱，環境變數已在建置時自動寫入 `/sandbox/.bashrc`，每次連線沙箱時自動載入，**不需手動設定**。
-
-可在沙箱內確認：
-
-```bash
-grep ANTHROPIC ~/.bashrc
-# 預期輸出：
-# export ANTHROPIC_AUTH_TOKEN=ollama
-# export ANTHROPIC_BASE_URL=https://inference.local
-```
-
-> **說明：** `Dockerfile.default` 在 Claude Code 安裝後，將環境變數追加至 `/sandbox/.bashrc`。每次重建沙箱都會自動包含，不會遺失。
 
 ### 推薦模型
 
