@@ -1888,23 +1888,20 @@ claude --model qwen3.5:cloud
 claude --model kimi-k2.5:cloud
 ```
 
-#### 步驟 4：持久化環境變數
+#### 步驟 4：環境變數持久化（已自動完成）
 
-每次連線沙箱時都需要設定環境變數。建議寫入 shell profile：
+使用 `Dockerfile.default` 建置的沙箱，環境變數已在建置時自動寫入 `/sandbox/.bashrc`，每次連線沙箱時自動載入，**不需手動設定**。
+
+可在沙箱內確認：
 
 ```bash
-# 在沙箱內
-cat >> ~/.bashrc << 'EOF'
-
-# Claude Code + Ollama 設定
-export ANTHROPIC_AUTH_TOKEN=ollama
-export ANTHROPIC_BASE_URL=https://inference.local
-EOF
-
-source ~/.bashrc
+grep ANTHROPIC ~/.bashrc
+# 預期輸出：
+# export ANTHROPIC_AUTH_TOKEN=ollama
+# export ANTHROPIC_BASE_URL=https://inference.local
 ```
 
-> **注意：** `.bashrc` 位於 `/sandbox/.bashrc`，在沙箱的可寫區域內，重啟沙箱後保留。但**重建沙箱時會遺失**，需重新設定。若需持久化，可將 `.bashrc` 放入 `.openclaw-data/` 並在 Dockerfile 中複製。
+> **說明：** `Dockerfile.default` 在 Claude Code 安裝後，將環境變數追加至 `/sandbox/.bashrc`。每次重建沙箱都會自動包含，不會遺失。
 
 ### 推薦模型
 
