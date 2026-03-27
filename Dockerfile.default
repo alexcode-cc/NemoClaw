@@ -136,6 +136,12 @@ os.chmod(path, 0o600)"
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
     && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
+# Install Claude Code CLI for in-sandbox development with Ollama.
+# Uses npm (not the official install.sh) to avoid Bun AVX dependency
+# that fails on VMware/older CPUs. Environment variables for Ollama
+# connection are set at runtime (see docs-cht/09-Ubuntu-Ollama-安裝指南.md).
+RUN npm install -g @anthropic-ai/claude-code
+
 # Copy custom .openclaw-data files from project directory into sandbox.
 # This syncs all files and subdirectories (skills, hooks, identity, etc.)
 # into the writable .openclaw-data area before the security lockdown.

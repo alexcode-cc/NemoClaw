@@ -1771,7 +1771,9 @@ nemoclaw onboard --non-interactive
 
 ## 在沙箱內使用 Claude Code + Ollama 進行程式開發
 
-Claude Code 已預裝在沙箱內（`/usr/local/bin/claude`），搭配 Ollama 0.14+ 的 Anthropic Messages API 相容功能，可以使用本地 Ollama 模型進行程式開發，不需要 Anthropic API Key。
+搭配 Ollama 0.14+ 的 Anthropic Messages API 相容功能，可以在沙箱內使用 Claude Code + 本地 Ollama 模型進行程式開發，不需要 Anthropic API Key。
+
+> **注意：** Claude Code **未預裝**在 OpenClaw 基礎映像中。使用客製化的 `Dockerfile.default`（見「第六步：快捷方式」）會在建置時透過 `npm install -g @anthropic-ai/claude-code` 自動安裝。若使用原始 Dockerfile，需在 Host 端安裝後手動上傳至沙箱。
 
 ### 架構說明
 
@@ -1796,7 +1798,7 @@ Claude Code 和 OpenClaw Agent 都透過 `inference.local`（OpenShell 閘道代
 |------|------|------|
 | Ollama 0.14+ | Host 端 | 需支援 Anthropic Messages API |
 | Ollama 監聽 0.0.0.0 | Host 端 | 已在第二步設定 |
-| Claude Code | 沙箱內 | 已預裝（OpenClaw 基礎映像） |
+| Claude Code | 沙箱內 | 由 `Dockerfile.default` 建置時安裝（`npm install -g @anthropic-ai/claude-code`） |
 | 推論路由已設定 | Host 端 | 已在 Onboard 時設定（ollama-local provider） |
 
 **檢查 Ollama 版本（Host 端）：**
@@ -1807,7 +1809,52 @@ ollama --version
 # 若版本過舊：curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-### 設定步驟（全部在沙箱內操作）
+### 安裝 Claude Code
+
+#### 方式 A：透過 Dockerfile.default 自動安裝（推薦）
+
+使用客製化的 `Dockerfile.default` 建置沙箱時，Claude Code 會在建置時自動安裝。確認你已執行：
+
+```bash
+# Host 端（在 Onboard 之前）
+cp Dockerfile.default Dockerfile
+cp Dockerfile.base-default Dockerfile.base
+```
+
+重建沙箱後即可在沙箱內直接使用 `claude` 指令。
+
+#### 方式 B：Host 端安裝後手動上傳
+
+若使用原始 Dockerfile（未包含 Claude Code），可在 Host 端安裝後上傳：
+
+```bash
+# Host 端 — 安裝 Claude Code（使用 npm，避免 Bun AVX 問題）
+npm install -g @anthropic-ai/claude-code
+
+# 確認安裝
+claude --version
+
+# 找出安裝路徑
+npm root -g
+# 輸出例如：/home/alex/.npm-global/lib/node_modules
+
+# 打包上傳至沙箱
+tar czf /tmp/claude-code.tgz -C $(npm root -g) @anthropic-ai/claude-code
+openshell sandbox upload my-assistant /tmp/claude-code.tgz /sandbox/
+
+# 進入沙箱安裝
+nemoclaw my-assistant connect
+# 在沙箱內：
+cd /sandbox
+tar xzf claude-code.tgz
+npm install -g ./\@anthropic-ai/claude-code
+rm -rf claude-code.tgz @anthropic-ai
+claude --version
+```
+
+> **為何不用官方 `install.sh`？** 官方安裝腳本使用 Bun runtime，而 Bun 需要 CPU 支援 AVX 指令集。VMware 虛擬機預設不暴露 AVX，會導致 `Illegal instruction (core dumped)` 錯誤。使用 `npm install -g` 不依賴 Bun，可在任何 CPU 上運行。
+
+### 設定步驟（沙箱內操作）
 
 #### 步驟 1：連線至沙箱
 
@@ -1977,7 +2024,7 @@ curl -s http://host.openshell.internal:11434/api/tags | head -5
 | 項目 | 說明 |
 |------|------|
 | API 相容性 | 需要 Ollama 0.14+，舊版本不支援 Anthropic Messages API |
-| Claude Code 已預裝 | 沙箱內不需要也**無法**另外安裝（`claude.ai` 不在網路策略白名單中） |
+| Claude Code 安裝方式 | 透過 `Dockerfile.default` 建置時以 `npm` 安裝。沙箱內**無法**用官方 `install.sh` 安裝（`claude.ai` 不在網路策略中，且 Bun runtime 需要 AVX 指令集，VMware 虛擬機不支援） |
 | 推論路由 | 方式 A 與 OpenClaw Agent 共用閘道代理；方式 B 直連 Ollama |
 | 模型切換 | 在沙箱內可直接切換（`claude --model <model>`），不需重建（等級 0） |
 | 環境變數 | 重建沙箱後需重新設定（或持久化至 `.openclaw-data/`） |
