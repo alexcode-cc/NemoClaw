@@ -1769,6 +1769,220 @@ nemoclaw onboard --non-interactive
 
 > **重要：** 網路策略只能在 **Host 端** 套用，沙箱內的 `openshell` 指令無法修改網路策略。這是 OpenShell 的安全設計 — 沙箱內的 Agent 不能自行放寬網路存取權限。
 
+## 在沙箱內使用 Claude Code + Ollama 進行程式開發
+
+Claude Code 已預裝在沙箱內（`/usr/local/bin/claude`），搭配 Ollama 0.14+ 的 Anthropic Messages API 相容功能，可以使用本地 Ollama 模型進行程式開發，不需要 Anthropic API Key。
+
+### 架構說明
+
+```
+沙箱內                                        Host 端
+┌──────────────────────┐                ┌─────────────────┐
+│ Claude Code          │                │                 │
+│   ANTHROPIC_BASE_URL ├───inference────►  Ollama 0.14+   │
+│   = inference.local  │    .local      │  :11434         │
+│                      │   (閘道代理)    │                 │
+│ OpenClaw Agent       │                │                 │
+│   同樣走 inference   ├───inference────►  (同上)          │
+│   .local 代理        │    .local      │                 │
+└──────────────────────┘                └─────────────────┘
+```
+
+Claude Code 和 OpenClaw Agent 都透過 `inference.local`（OpenShell 閘道代理）存取 Ollama，不需要額外的網路策略。
+
+### 前置條件
+
+| 項目 | 位置 | 說明 |
+|------|------|------|
+| Ollama 0.14+ | Host 端 | 需支援 Anthropic Messages API |
+| Ollama 監聽 0.0.0.0 | Host 端 | 已在第二步設定 |
+| Claude Code | 沙箱內 | 已預裝（OpenClaw 基礎映像） |
+| 推論路由已設定 | Host 端 | 已在 Onboard 時設定（ollama-local provider） |
+
+**檢查 Ollama 版本（Host 端）：**
+
+```bash
+ollama --version
+# 需要 0.14.0 或更新版本
+# 若版本過舊：curl -fsSL https://ollama.com/install.sh | sh
+```
+
+### 設定步驟（全部在沙箱內操作）
+
+#### 步驟 1：連線至沙箱
+
+```bash
+# Host 端
+nemoclaw my-assistant connect
+```
+
+#### 步驟 2：設定環境變數
+
+```bash
+# 在沙箱內
+export ANTHROPIC_AUTH_TOKEN=ollama
+export ANTHROPIC_BASE_URL=https://inference.local
+
+# 驗證連線（透過閘道代理存取 Ollama）
+curl -s https://inference.local/v1/models 2>/dev/null | head -5
+```
+
+> **說明：** `inference.local` 是 OpenShell 閘道的推論代理端點。閘道會將請求轉發至 Host 端的 Ollama（`host.openshell.internal:11434`），不需要額外的網路策略。使用 `https://inference.local`（不含 `/v1`），因為 Claude Code 使用 Anthropic Messages API 格式。
+
+#### 步驟 3：啟動 Claude Code
+
+```bash
+# 使用已在 Onboard 時設定的主要模型
+claude
+
+# 或指定特定模型
+claude --model glm-5:cloud
+claude --model qwen3.5:cloud
+claude --model kimi-k2.5:cloud
+```
+
+#### 步驟 4：持久化環境變數
+
+每次連線沙箱時都需要設定環境變數。建議寫入 shell profile：
+
+```bash
+# 在沙箱內
+cat >> ~/.bashrc << 'EOF'
+
+# Claude Code + Ollama 設定
+export ANTHROPIC_AUTH_TOKEN=ollama
+export ANTHROPIC_BASE_URL=https://inference.local
+EOF
+
+source ~/.bashrc
+```
+
+> **注意：** `.bashrc` 位於 `/sandbox/.bashrc`，在沙箱的可寫區域內，重啟沙箱後保留。但**重建沙箱時會遺失**，需重新設定。若需持久化，可將 `.bashrc` 放入 `.openclaw-data/` 並在 Dockerfile 中複製。
+
+### 推薦模型
+
+#### 雲端路由模型（不需本地 GPU，透過 Ollama Cloud）
+
+| 模型 | 說明 | 適合場景 |
+|------|------|----------|
+| `glm-5:cloud` | 推理與程式碼生成 | 通用開發 |
+| `kimi-k2.5:cloud` | 多模態推理 + 子代理 | 複雜推理 |
+| `qwen3.5:cloud` | 397B 推理模型 | 大規模推理 |
+| `deepseek-v3.2:cloud` | 推理模型 | 程式碼生成 |
+
+#### 本地模型（需要 GPU VRAM）
+
+| 模型 | VRAM 需求 | 說明 |
+|------|-----------|------|
+| `qwen3-coder` | ~25 GB | 程式開發專用 |
+| `codellama` | ~8-48 GB | Meta Code Llama |
+
+> **提示：** 雲端路由模型（`:cloud` 後綴）透過 Ollama Cloud 執行，不需本地 GPU，適合 16 GB RAM 環境。
+
+### Python SDK 使用（在沙箱內）
+
+```python
+import anthropic
+
+client = anthropic.Anthropic(
+    base_url="https://inference.local",
+    api_key="ollama",  # 必填但不使用
+)
+
+message = client.messages.create(
+    model="glm-5:cloud",
+    max_tokens=4096,
+    messages=[
+        {"role": "user", "content": "寫一個檢查質數的函式"}
+    ]
+)
+print(message.content[0].text)
+```
+
+### 替代方案：直連 Host Ollama（不透過閘道代理）
+
+若 `inference.local` 代理不支援 Anthropic Messages API 格式（可能只支援 OpenAI-compatible），可改為直連 Host 端的 Ollama。此方式需要額外的網路策略。
+
+**步驟 1：在 Host 端套用 ollama-local 網路策略**
+
+建立策略檔案 `nemoclaw-blueprint/policies/presets/ollama-local.yaml`：
+
+```yaml
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: ollama-local
+  description: "Direct access to host Ollama API for Claude Code"
+
+network_policies:
+  ollama_local:
+    name: ollama_local
+    endpoints:
+      - host: host.openshell.internal
+        port: 11434
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: "*"
+              path: "/**"
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/claude }
+      - { path: /usr/bin/curl }
+```
+
+套用策略（Host 端）：
+
+```bash
+openshell policy set nemoclaw-blueprint/policies/presets/ollama-local.yaml
+```
+
+**步驟 2：在沙箱內設定直連環境變數**
+
+```bash
+# 在沙箱內
+export ANTHROPIC_AUTH_TOKEN=ollama
+export ANTHROPIC_BASE_URL=http://host.openshell.internal:11434
+
+# 驗證直連
+curl -s http://host.openshell.internal:11434/api/tags | head -5
+```
+
+**兩種方式比較：**
+
+| 項目 | 方式 A：inference.local 代理 | 方式 B：直連 Ollama |
+|------|------------------------------|---------------------|
+| 額外網路策略 | 不需要 | 需要 ollama-local |
+| API 格式 | 透過閘道轉譯 | 原生 Anthropic Messages API |
+| 安全性 | 較高（閘道控制） | 較低（直連 Host） |
+| 適用場景 | 一般使用 | inference.local 代理不支援時 |
+
+### 操作階段摘要
+
+| 階段 | 位置 | 操作 | 等級 |
+|------|:----:|------|:----:|
+| 確認 Ollama 0.14+ | Host 端 | `ollama --version` | — |
+| 套用 ollama-local 策略（僅方式 B） | Host 端 | `openshell policy set` | 0 |
+| 連線至沙箱 | Host 端 | `nemoclaw my-assistant connect` | — |
+| 設定環境變數 | 沙箱內 | `export ANTHROPIC_BASE_URL=...` | — |
+| 啟動 Claude Code | 沙箱內 | `claude --model glm-5:cloud` | — |
+| 持久化環境變數 | 沙箱內 | 寫入 `~/.bashrc` | — |
+| 查詢 Ollama 模型資訊 | Host 端 | `openshell policy set .../ollama-web.yaml` | 0 |
+
+### 限制與注意事項
+
+| 項目 | 說明 |
+|------|------|
+| API 相容性 | 需要 Ollama 0.14+，舊版本不支援 Anthropic Messages API |
+| Claude Code 已預裝 | 沙箱內不需要也**無法**另外安裝（`claude.ai` 不在網路策略白名單中） |
+| 推論路由 | 方式 A 與 OpenClaw Agent 共用閘道代理；方式 B 直連 Ollama |
+| 模型切換 | 在沙箱內可直接切換（`claude --model <model>`），不需重建（等級 0） |
+| 環境變數 | 重建沙箱後需重新設定（或持久化至 `.openclaw-data/`） |
+| 網路策略 | 方式 A 不需額外策略；方式 B 需 `ollama-local`；查詢 ollama.com 網站需 `ollama-web` |
+
 ## Discord 頻道設定
 
 NemoClaw 沙箱已預設允許 Discord 網路端點（discord.com、gateway.discord.gg、cdn.discordapp.com）。但 Discord 插件設定需寫入 `openclaw.json`，而此檔案在沙箱內為唯讀，因此必須在**建置 Dockerfile 時一併寫入**。
