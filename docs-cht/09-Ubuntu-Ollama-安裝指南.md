@@ -1720,6 +1720,55 @@ echo "檢查狀態：nemoclaw ${SANDBOX_NAME} status"
 echo "串流日誌：nemoclaw ${SANDBOX_NAME} logs --follow"
 ```
 
+## Ollama 網站查詢策略
+
+沙箱預設的網路策略不包含 Ollama 網站，若需在沙箱內查詢 `https://ollama.com/` 的模型資訊，需套用額外的網路策略。
+
+專案已內建 `ollama-web` 預設集（`nemoclaw-blueprint/policies/presets/ollama-web.yaml`），允許存取：
+
+| 端點 | 用途 | 允許方法 |
+|------|------|----------|
+| `ollama.com:443` | 官方網站（模型頁面、文件） | GET |
+| `api.ollama.com:443` | API 端點 | GET, POST |
+| `registry.ollama.ai:443` | 模型註冊表 | GET |
+
+允許的二進位檔：`node`、`openclaw`、`claude`
+
+### 套用方式
+
+**方式 A：動態套用（等級 0，臨時，~1 分鐘）**
+
+在 **Host 端**（非沙箱內）執行：
+
+```bash
+openshell policy set nemoclaw-blueprint/policies/presets/ollama-web.yaml
+```
+
+> **注意：** 動態套用僅限當前會話，沙箱重啟或重建後需重新套用。
+
+**方式 B：透過 CLI 套用（等級 0，臨時）**
+
+```bash
+nemoclaw my-assistant policy-add
+# 在互動選單中選擇 ollama-web
+```
+
+**方式 C：合併至基礎策略（永久，需等級 1 重建）**
+
+將預設集內容合併至 `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` 的 `network_policies:` 區段，然後重建沙箱：
+
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+NEMOCLAW_PROVIDER=ollama \
+NEMOCLAW_MODEL=glm-5:cloud \
+NEMOCLAW_POLICY_MODE=suggested \
+NEMOCLAW_RECREATE_SANDBOX=1 \
+nemoclaw onboard --non-interactive
+```
+
+> **重要：** 網路策略只能在 **Host 端** 套用，沙箱內的 `openshell` 指令無法修改網路策略。這是 OpenShell 的安全設計 — 沙箱內的 Agent 不能自行放寬網路存取權限。
+
 ## Discord 頻道設定
 
 NemoClaw 沙箱已預設允許 Discord 網路端點（discord.com、gateway.discord.gg、cdn.discordapp.com）。但 Discord 插件設定需寫入 `openclaw.json`，而此檔案在沙箱內為唯讀，因此必須在**建置 Dockerfile 時一併寫入**。
