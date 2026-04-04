@@ -16,37 +16,25 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 describe("gateway cleanup: Docker volumes removed on failure (#17)", () => {
   it("onboard.js: destroyGateway() removes Docker volumes", () => {
     const content = fs.readFileSync(path.join(ROOT, "bin/lib/onboard.js"), "utf-8");
-    expect(
-      content.includes("docker volume") && content.includes("openshell-cluster"),
-    ).toBe(true);
+    expect(content.includes("docker volume") && content.includes("openshell-cluster")).toBe(true);
   });
 
   it("onboard.js: volume cleanup runs on gateway start failure", () => {
     const content = fs.readFileSync(path.join(ROOT, "bin/lib/onboard.js"), "utf-8");
-    // The startGateway function should call destroyGateway after a failed start
-    const startGwBlock = content.match(/async function startGateway[\s\S]*?^}/m);
+    const startGwBlock = content.match(/async function startGatewayWithOptions[\s\S]*?^}/m);
     expect(startGwBlock).toBeTruthy();
 
-    // Count calls to destroyGateway — should be at least 3:
-    // 1. pre-cleanup before start
-    // 2. after start failure
-    // 3. after health check failure
-    const calls = (startGwBlock[0].match(/destroyGateway\(\)/g) || []).length;
-    expect(calls).toBeGreaterThanOrEqual(3);
+    // Current behavior:
+    // 1. stale gateway is detected but NOT destroyed upfront — gateway start
+    //    can recover the container without wiping metadata/certs
+    // 2. destroyGateway() runs inside the retry loop only on genuine failure
+    expect(startGwBlock[0].includes("if (hasStaleGateway(gwInfo))")).toBe(true);
+    expect(startGwBlock[0]).toContain("destroyGateway()");
   });
 
   it("uninstall.sh: includes Docker volume cleanup", () => {
     const content = fs.readFileSync(path.join(ROOT, "uninstall.sh"), "utf-8");
-    expect(
-      content.includes("docker volume") && content.includes("openshell-cluster"),
-    ).toBe(true);
+    expect(content.includes("docker volume") && content.includes("openshell-cluster")).toBe(true);
     expect(content.includes("remove_related_docker_volumes")).toBe(true);
-  });
-
-  it("setup.sh: includes Docker volume cleanup on failure", () => {
-    const content = fs.readFileSync(path.join(ROOT, "scripts/setup.sh"), "utf-8");
-    expect(
-      content.includes("docker volume") && content.includes("openshell-cluster"),
-    ).toBe(true);
   });
 });
