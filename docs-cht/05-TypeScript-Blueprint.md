@@ -51,6 +51,8 @@ rollback  # 停止沙箱、清理狀態
 
 整合點：在 `action_plan()` 和 `action_apply()` 中呼叫，同時驗證 CLI `--endpoint-url` 覆蓋和 Blueprint 設定檔中定義的端點。
 
+新增 CGNAT 封鎖（65693a9）：100.64.0.0/10（Carrier-Grade NAT），防止透過電信商 NAT 位址繞過 SSRF 驗證。
+
 **測試：** `nemoclaw/src/blueprint/ssrf.test.ts`（178 行）
 
 ### 動作函式

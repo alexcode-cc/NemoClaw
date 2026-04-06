@@ -157,7 +157,7 @@ async function handleSlashCommand(ctx, _api): Promise<PluginCommandResult> {
 ### 資料結構
 
 ```typescript
-type EndpointType = "build" | "ncp" | "nim-local" | "vllm" | "ollama" | "custom";
+type EndpointType = "build" | "ncp" | "nim-local" | "vllm" | "ollama" | "custom" | "anthropicCompatible";
 
 interface NemoClawOnboardConfig {
   endpointType: EndpointType;
@@ -189,6 +189,7 @@ interface NemoClawOnboardConfig {
 | `vllm` | Local vLLM Server |
 | `ollama` | Local Ollama |
 | `custom` | Custom Endpoint |
+| `anthropicCompatible` | Anthropic Compatible Endpoint |
 | URL 含 `inference.local` | Managed Inference Route |
 
 ## 插件狀態（blueprint/state.ts）
